@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alien Planet Maker</title>
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #04040c; }
+    canvas { display: block; }
+  </style>
+  <!-- p5.js 1.9.4 from cdnjs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+</head>
+<body>
+<script>
+/* ============================================================
+   ALIEN PLANET MAKER
+   - A twinkling starfield driven by p5.js noise()
+   - One big procedural planet (colour bands / craters / mixed)
+   - Sometimes a tilted ring, 0–2 orbiting moons
+   - Click anywhere for a brand-new planet + a silly name
+   ============================================================ */
+
+let stars = [];      // background stars (persist + twinkle)
+let nebula = [];     // soft drifting nebula clouds
+let planet;          // the current planet object
+
+// ---- small helpers -------------------------------------------
+const pick = (a) => a[Math.floor(random(a.length))];
+
+// Colour palettes for banded (gas-giant style) planets
+const BAND_PALETTES = [
+  ['#e8b06a', '#c96f3a', '#a3432e', '#7a2f24', '#e8c98a', '#d98e4a'], // caramel giant
+  ['#3d5f9e', '#2b4a86', '#5a86c4', '#8fb0e0', '#1f3a6e', '#6f9fd8'], // deep blue
+  ['#3aa0a0', '#2a7f8a', '#55c0c0', '#1e5f6b', '#8ad8d0', '#2f6f78'], // teal ice
+  ['#8a5fc4', '#6a3fa0', '#a880d8', '#4a2a78', '#c9a8e8', '#7a4ab0'], // violet
+  ['#b03030', '#7a1f1f', '#d05050', '#5a1515', '#e08080', '#901818'], // crimson
+  ['#d8a828', '#a87818', '#e8c060', '#806010', '#f0d890', '#b88820'], // golden
+];
+
+// Rocky base colours for cratered planets
+const ROCK_BASES = [
+  '#b8a88a', '#a0a0a8', '#b07860', '#6a9088',
+  '#c0b098', '#8a8a96', '#a87860', '#7a9a90',
+];
+
+const RING_COLOURS = [
+  'rgba(210,190,140,ALPHA)', 'rgba(190,200,220,ALPHA)',
+  'rgba(150,200,190,ALPHA)', 'rgba(200,160,210,ALPHA)',
+  'rgba(220,210,170,ALPHA)',
+];
+
+const MOON_COLOURS = ['#c8c8d0', '#b0a890', '#90a0b0', '#c0b0a0', '#a8a8b8', '#d0ccc0'];
+
+/* ============================================================
+   SETUP
+   ============================================================ */
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  noiseSeed(floor(random(100000)));   // one seed — the starfield twinkle stays smooth
+  buildStars();
+  buildNebula();
+  generatePlanet();
+}
+
+/* ============================================================
+   STARFIELD + NEBULA
+   ============================================================ */
+function buildStars() {
+  stars = [];
+  const density = (width * height) / 8000;
+  for (let i = 0; i < density; i++) {
+    const kind = random();
+    stars.push({
+      x: random(width),
+      y: random(height),
+      r: kind < 0.05 ? random(1.8, 2.8) : random(0.4, 1.4),   // a few big stars
+      base: random(60, 210),
+      speed: random(0.4, 1.6),
+      phase: random(TWO_PI),
+      col: kind < 0.05
+        ? [255, 240, 210]                 // warm bright
+        : pick([[255, 255, 255], [207, 224, 255], [255, 224, 192], [208, 208, 255]]),
+      flare: kind < 0.05,
+    });
+  }
+}
+
+function buildNebula() {
+  nebula = [];
+  const cols = [
+    'rgba(90, 50, 150, 0.10)',
+    'rgba(30, 90, 140, 0.09)',
+    'rgba(150, 60, 110, 0.08)',
+    'rgba(40, 120, 110, 0.08)',
+  ];
+  for (let i = 0; i < 4; i++) {
+    nebula.push({
+      x: random(width),
+      y: random(height),
+      r: random(min(width, height) * 0.35, min(width, height) * 0.6),
+      col: cols[i],
+      seed: random(1000),
+    });
+  }
+}
+
+/* ============================================================
+   PLANET GENERATION
+   ============================================================ */
+function generatePlanet() {
+  const W = width, H = height;
+  const px = W / 2;
+  const py = H * 0.46;
+  const R = min(W, H) * random(0.24, 0.32);
+
+  // Feature style: bands, craters, or a weird mix of both
+  const roll = random();
+  const type = roll < 0.45 ? 'bands' : roll < 0.8 ? 'craters' : 'mixed';
+
+  const palette = pick(BAND_PALETTES);
+  const baseColor = pick(ROCK_BASES);
+
+  const p = {
+    px, py, R, type,
+    palette, baseColor,
+    bandColors: palette.slice(0, 5),
+    bandCount: floor(random(5, 9)),
+    wobFreq: random(0.004, 0.012),
+    wobAmp: 0,
+    wobOffX: random(1000),
+    wobOffY: random(1000),
+    craters: [],
+    hasRing: random() < 0.55,
+    moons: [],
+    atmo: `rgba(${pick([[120, 180, 255], [255, 180, 120], [140, 220, 200], [200, 150, 255]]).join(',')}, 0.30)`,
+  };
+  p.wobAmp = (2 * R / p.bandCount) * random(0.8, 1.6);
+
+  // Craters (for 'craters' and 'mixed')
+  if (type !== 'bands') {
+    const n = type === 'mixed' ? floor(random(5, 9)) : floor(random(14, 26));
+    for (let i = 0; i < n; i++) {
+      const a = random(TWO_PI);
+      const d = sqrt(random()) * R * 0.92;   // biased toward centre
+      const x = px + cos(a) * d;
+      const y = py + sin(a) * d;
+      const r = R * random(0.045, 0.16);
+      const ang = atan2(y - py, x - px);
+      const flatten = lerp(1, 0.35, constrain(d / R, 0, 1));  // foreshorten at the limb
+      p.craters.push({
+        x, y, r, ang, flatten,
+        floor: color(0, 0, 0, random(80, 140)),
+        hi: color(255, 255, 255, random(35, 85)),
+      });
+    }
+  }
+
+  // Ring
+  if (p.hasRing) {
+    p.ringRx = R * random(1.5, 2.0);
+    p.ringRy = p.ringRx * random(0.16, 0.42);   // flatten = how edge-on it is
+    p.ringAngle = random(-0.35, 0.35);
+    p.ringW = R * random(0.12, 0.26);
+    p.ringCol = pick(RING_COLOURS).replace('ALPHA', random(0.5, 0.8).toFixed(2));
+    p.ringCol2 = 'rgba(255,255,255,0.25)';
+  }
+
+  // Moons (0–2)
+  const moonCount = floor(random(0, 3));
+  for (let i = 0; i < moonCount; i++) {
+    const rx = R * random(1.7, 2.8);
+    p.moons.push({
+      a0: random(TWO_PI),
+      speed: random(0.004, 0.02) * (random() < 0.5 ? 1 : -1),
+      rx,
+      ry: rx * random(0.7, 1.0),
+      tilt: random(-0.4, 0.4),
+      r: R * random(0.05, 0.14),
+      col: pick(MOON_COLOURS),
+    });
+  }
+
+  p.name = makeName();
+  planet = p;
+}
+
+/* ============================================================
+   SILLY NAME GENERATOR
+   ============================================================ */
+function makeName() {
+  const onsets = ['B','BL','BR','D','DR','F','FL','G','GL','GR','K','KL','KR','M','N','P','PL','PR','Q','R','S','SK','SL','T','TH','TR','V','VR','X','Z','ZR','VEX','MOR','QUA','GLOR'];
+  const vowels = ['A','E','I','O','U','AE','AI','EA','OO','OU','AU','IX','OR','AR','UL','EX'];
+  const codas  = ['','','','','','B','D','G','K','L','M','N','P','R','S','T','X','Z','RK','ND','MP','TH','TR','NON','TAR','ZAR','PLEX','TRON','VOID','RAX'];
+
+  const syll = random() < 0.5 ? 2 : 3;
+  let word = '';
+  for (let i = 0; i < syll; i++) word += pick(onsets) + pick(vowels) + pick(codas);
+  word = word.toUpperCase();
+
+  let suffix = '-' + floor(random(1, 100));
+  if (random() < 0.3) suffix += pick(['A', 'B', 'X', 'Z', 'II', 'Prime']);
+  return word + suffix;
+}
+
+/* ============================================================
+   DRAW
+   ============================================================ */
+function draw() {
+  drawSpace();
+  const t = frameCount * 0.008;
+
+  drawNebula(t);
+  drawStars(t);
+
+  // Ring: far half first, near half after the planet (for occlusion)
+  if (planet.hasRing) drawRing(planet, false);
+
+  // Moons that are on the far side of the planet
+  for (const m of planet.moons) {
+    const mp = moonPos(m);
+    if (mp.behind) drawMoon(mp);
+  }
+
+  drawAtmosphere(planet);
+  drawPlanetBody(planet);
+
+  if (planet.hasRing) drawRing(planet, true);
+
+  // Moons in front of the planet
+  for (const m of planet.moons) {
+    const mp = moonPos(m);
+    if (!mp.behind) drawMoon(mp);
+  }
+
+  drawName(planet);
+  drawHint();
+}
+
+// Deep-space backdrop
+function drawSpace() {
+  const c = drawingContext;
+  const g = c.createLinearGradient(0, 0, 0, height);
+  g.addColorStop(0, '#04040c');
+  g.addColorStop(0.6, '#0a0a1c');
+  g.addColorStop(1, '#140f28');
+  c.fillStyle = g;
+  c.fillRect(0, 0, width, height);
+}
+
+function drawNebula(t) {
+  const c = drawingContext;
+  for (const nb of nebula) {
+    const nx = nb.x + (noise(t * 0.03 + nb.seed) - 0.5) * 140;
+    const ny = nb.y + (noise(t * 0.03 + nb.seed + 50) - 0.5) * 140;
+    const g = c.createRadialGradient(nx, ny, 0, nx, ny, nb.r);
+    g.addColorStop(0, nb.col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.fillRect(nx - nb.r, ny - nb.r, nb.r * 2, nb.r * 2);
+  }
+}
+
+// Twinkling stars — brightness modulated by a drifting noise field
+function drawStars(t) {
+  noStroke();
+  for (const s of stars) {
+    const tw = noise(s.x * 0.02, s.y * 0.02, t);       // 0..1, organic twinkle
+    const sparkle = 0.7 + 0.3 * sin(frameCount * s.speed + s.phase);
+    const a = s.base * (0.35 + 0.65 * tw) * sparkle;
+    fill(s.col[0], s.col[1], s.col[2], a);
+    circle(s.x, s.y, s.r * 2);
+
+    // A little cross-flare for the big stars
+    if (s.flare) {
+      stroke(s.col[0], s.col[1], s.col[2], a * 0.5);
+      strokeWeight(1);
+      const L = s.r * 3.5;
+      line(s.x - L, s.y, s.x + L, s.y);
+      line(s.x, s.y - L, s.x, s.y + L);
+      noStroke();
+    }
+  }
+}
+
+// ---- planet body: features clipped to a circle, then sphere-shaded ----
+function drawPlanetBody(p) {
+  const c = drawingContext;
+  c.save();
+  c.beginPath();
+  c.arc(p.px, p.py, p.R, 0, TWO_PI);
+  c.clip();
+
+  noStroke();
+  if (p.type === 'craters') {
+    fill(p.baseColor);
+  } else {
+    fill(p.palette[0]);        // bands start from the base band colour
+  }
+  circle(p.px, p.py, p.R * 2);
+
+  if (p.type !== 'craters') drawBands(p);
+  if (p.type !== 'bands') drawCraters(p);
+
+  applySphereShading(p);
+  c.restore();
+}
+
+// Wavy horizontal colour bands (gas giant)
+function drawBands(p) {
+  const top = p.py - p.R;
+  const bottom = p.py + p.R;
+  const bandH = (bottom - top) / p.bandCount;
+  noStroke();
+
+  for (let i = 0; i < p.bandCount; i++) {
+    const y0 = top + i * bandH;
+    const y1 = y0 + bandH;
+    fill(p.bandColors[i % p.bandColors.length]);
+
+    beginShape();
+    for (let x = p.px - p.R; x <= p.px + p.R; x += 7) {
+      const nv = noise(x * p.wobFreq + p.wobOffX, i * 0.9 + p.wobOffY);
+      vertex(x, y0 + (nv - 0.5) * p.wobAmp);
+    }
+    for (let x = p.px + p.R; x >= p.px - p.R; x -= 7) {
+      const nv = noise(x * p.wobFreq + p.wobOffX + 5.1, i * 0.9 + p.wobOffY + 3.7);
+      vertex(x, y1 + (nv - 0.5) * p.wobAmp);
+    }
+    endShape(CLOSE);
+  }
+}
+
+// Foreshortened craters (rocky planet)
+function drawCraters(p) {
+  for (const cr of p.craters) {
+    push();
+    translate(cr.x, cr.y);
+    rotate(cr.ang);
+    noStroke();
+    fill(cr.floor);
+    ellipse(0, 0, cr.r * 2, cr.r * 2 * cr.flatten);
+    // lit rim on the upper-left
+    noFill();
+    stroke(cr.hi);
+    strokeWeight(max(1, cr.r * 0.14));
+    arc(0, 0, cr.r * 2, cr.r * 2 * cr.flatten, PI * 0.95, PI * 1.45);
+    pop();
+  }
+}
+
+// 3-D shading: highlight upper-left, terminator lower-right
+function applySphereShading(p) {
+  const c = drawingContext;
+  const g = c.createRadialGradient(
+    p.px - p.R * 0.45, p.py - p.R * 0.45, p.R * 0.1,
+    p.px, p.py, p.R
+  );
+  g.addColorStop(0, 'rgba(255,255,255,0.30)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.02)');
+  g.addColorStop(1, 'rgba(4,4,18,0.62)');
+  c.fillStyle = g;
+  c.fillRect(p.px - p.R, p.py - p.R, p.R * 2, p.R * 2);
+}
+
+// Soft atmosphere halo around the planet
+function drawAtmosphere(p) {
+  const c = drawingContext;
+  const g = c.createRadialGradient(p.px, p.py, p.R * 0.85, p.px, p.py, p.R * 1.18);
+  g.addColorStop(0, p.atmo);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = g;
+  c.fillRect(p.px - p.R * 1.2, p.py - p.R * 1.2, p.R * 2.4, p.R * 2.4);
+}
+
+// Tilted ring band (split into far / near halves)
+function drawRing(p, front) {
+  push();
+  translate(p.px, p.py);
+  rotate(p.ringAngle);
+  noFill();
+  strokeWeight(p.ringW);
+  if (front) {
+    stroke(p.ringCol);
+    arc(0, 0, p.ringRx * 2, p.ringRy * 2, 0, PI);          // near (lower) half
+    strokeWeight(max(1, p.ringW * 0.12));
+    stroke(p.ringCol2);
+    arc(0, 0, (p.ringRx + p.ringW * 0.6) * 2, (p.ringRy + p.ringW * 0.6) * 2, 0, PI);
+  } else {
+    stroke(p.ringCol);
+    arc(0, 0, p.ringRx * 2, p.ringRy * 2, PI, TWO_PI);     // far (upper) half
+  }
+  pop();
+}
+
+// Moon orbit position + whether it is behind the planet
+function moonPos(m) {
+  const ang = m.a0 + frameCount * m.speed;
+  let dx = cos(ang) * m.rx;
+  let dy = sin(ang) * m.ry;
+  const ct = cos(m.tilt), st = sin(m.tilt);
+  const x = planet.px + dx * ct - dy * st;
+  const y = planet.py + dx * st + dy * ct;
+  return { x, y, r: m.r, col: m.col, behind: sin(ang) < 0 };
+}
+
+function drawMoon(m) {
+  const c = drawingContext;
+  c.save();
+  c.beginPath();
+  c.arc(m.x, m.y, m.r, 0, TWO_PI);
+  c.clip();
+  fill(m.col);
+  noStroke();
+  rect(m.x - m.r, m.y - m.r, m.r * 2, m.r * 2);
+  const g = c.createRadialGradient(m.x - m.r * 0.45, m.y - m.r * 0.45, m.r * 0.05, m.x, m.y, m.r);
+  g.addColorStop(0, 'rgba(255,255,255,0.5)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+  g.addColorStop(1, 'rgba(0,0,10,0.6)');
+  c.fillStyle = g;
+  c.fillRect(m.x - m.r, m.y - m.r, m.r * 2, m.r * 2);
+  c.restore();
+}
+
+// The silly name, glowing under the planet
+function drawName(p) {
+  push();
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  const ts = min(width, height) * 0.045;
+  textSize(ts);
+  const y = p.py + p.R + min(width, height) * 0.09;
+
+  drawingContext.shadowColor = 'rgba(150,190,255,0.8)';
+  drawingContext.shadowBlur = 22;
+  fill(255, 255, 255, 245);
+  text(p.name, p.px, y);
+  drawingContext.shadowBlur = 0;
+
+  // a little sub-caption
+  textStyle(NORMAL);
+  textSize(ts * 0.4);
+  fill(255, 255, 255, 150);
+  text('alien planet · class ' + pick(['I', 'II', 'III', 'IV', 'V']), p.px, y + ts * 0.9);
+  pop();
+}
+
+function drawHint() {
+  push();
+  textAlign(CENTER, CENTER);
+  textSize(13);
+  fill(255, 255, 255, 110);
+  text('click anywhere for a new planet', width / 2, height - 26);
+  pop();
+}
+
+/* ============================================================
+   INTERACTION
+   ============================================================ */
+function mousePressed() {
+  generatePlanet();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  buildStars();       // re-spread stars to the new size
+}
+</script>
+</body>
+</html>
